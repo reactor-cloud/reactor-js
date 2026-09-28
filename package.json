@@ -6,7 +6,7 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Reactor/reactor-js.git"
+    "url": "https://github.com/reactor-cloud/reactor-js.git"
   },
   "files": [
     "src"
