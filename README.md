@@ -1,15 +1,15 @@
-# @reactor/client
+# @reactor-cloud/client
 
 JavaScript client for Reactor. Auth, Postgres data, file storage, and functions for web apps.
 
 ```sh
-npm install @reactor/client@beta
+npm install @reactor-cloud/client@beta
 ```
 
-[reactor.cloud](https://www.reactor.cloud) · [docs](https://github.com/reactor-cloud/reactor/blob/v1.26.09-beta.1/docs/clients/javascript.md)
+[reactor.cloud](https://www.reactor.cloud) · [docs](https://github.com/reactor-cloud/reactor/blob/v1.26.09-beta.2/docs/clients/javascript.md)
 
 ```ts
-import { createClient } from "@reactor/client"
+import { createClient } from "@reactor-cloud/client"
 
 const reactor = createClient("https://<ref>.apps.localhost:18000", anonKey)
 
@@ -33,7 +33,7 @@ const result = await reactor.functions.invoke("ping", { body: { hello: "world" }
 
 The client keeps the session in memory. Pass `session` in the options to restore one. `signInWithOAuth` throws. OAuth is not in this release.
 
-Package version `1.26.9-beta.1`.
+Package version `1.26.9-beta.2`.
 
 ## License
 

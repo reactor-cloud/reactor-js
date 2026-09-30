@@ -6,6 +6,7 @@ type Call = { url: string; method: string; headers: Record<string, string>; body
 
 const calls: Call[] = []
 let restore: (() => void) | undefined
+let passwordBody: unknown
 
 function install() {
   calls.length = 0
@@ -30,6 +31,7 @@ function route(call: Call): Response {
   const url = new URL(call.url)
   if (url.pathname === "/auth/v1/signup" || url.pathname === "/auth/v1/token") {
     const sent = call.body ? JSON.parse(call.body) : {}
+    if (passwordBody && !sent.refresh_token && !sent.code) return json(passwordBody)
     const refresh = sent.refresh_token ? "refresh-2" : "refresh-1"
     return json({
       access_token: sent.refresh_token ? "access-2" : "access-1",
@@ -50,6 +52,12 @@ function route(call: Call): Response {
     })
   }
   if (url.pathname === "/auth/v1/user") return json({ id: "user-1", email: "a@b.co" })
+  if (url.pathname.startsWith("/auth/v1/factors") || url.pathname === "/auth/v1/verify-email" || url.pathname === "/auth/v1/verify-email/send") {
+    if (url.pathname.endsWith("/totp") || url.pathname.endsWith("/verify") || url.pathname.endsWith("/recovery") || url.pathname === "/auth/v1/verify-email") {
+      return json({ access_token: "access-factor", refresh_token: "refresh-factor", user: { id: "user-1", email: "a@b.co" } })
+    }
+    return json({ ok: true, secret: "secret" })
+  }
   if (url.pathname === "/storage/v1/object/presign") {
     return json({ url: "https://signed.example/object", key: "files/note.txt" })
   }
@@ -66,7 +74,10 @@ function json(body: unknown, status = 200): Response {
   })
 }
 
-afterEach(() => restore?.())
+afterEach(() => {
+  passwordBody = undefined
+  restore?.()
+})
 
 test("uses the anon key before login and the access token after", async () => {
   install()
@@ -179,8 +190,40 @@ test("select builds a postgrest query and writes ask for representation", async 
   assert.match(insert.headers.prefer ?? "", /return=representation/)
 })
 
-test("oauth is unsupported", () => {
+test("password results that are not sessions stay out of the session", async () => {
   install()
   const client = createClient("http://reactor.test", "anon-key")
-  assert.throws(() => client.auth.signInWithOAuth(), /unsupported/)
+  passwordBody = { verification_required: true, user: { id: "user-1", email: "a@b.co" } }
+  const pending = await client.auth.signUp({ email: "a@b.co", password: "password123" })
+  assert.equal("verification_required" in pending && pending.verification_required, true)
+  assert.equal(client.auth.getSession(), null)
+  passwordBody = { mfa_required: true, mfa_token: "mfa", factors: ["totp"] }
+  const challenged = await client.auth.signInWithPassword({ email: "a@b.co", password: "password123" })
+  assert.equal("mfa_token" in challenged && challenged.mfa_token, "mfa")
+  assert.equal(client.auth.getSession(), null)
+  passwordBody = { enrollment_required: true, enroll_token: "enroll", factors: [] }
+  const enroll = await client.auth.signInWithPassword({ email: "a@b.co", password: "password123" })
+  assert.equal("enroll_token" in enroll && enroll.enroll_token, "enroll")
+  assert.equal(client.auth.getSession(), null)
+})
+
+test("verify, factors, and oauth code exchange store a session", async () => {
+  install()
+  const client = createClient("http://reactor.test", "anon-key")
+  const verified = await client.auth.verifyEmail({ email: "a@b.co", code: "123456" })
+  assert.equal(verified.access_token, "access-factor")
+  await client.auth.resendVerification("a@b.co")
+  const totp = await client.auth.verifyTotp("mfa", "123456")
+  assert.equal(client.auth.getSession()?.access_token, totp.access_token)
+  await client.auth.verifyRecovery("mfa", "backup")
+  await client.auth.verifyPasskey("mfa", { id: "cred" })
+  await client.auth.enrollTotp({ token: "enroll" })
+  await client.auth.enrollTotp({ token: "enroll", code: "123456" })
+  await client.auth.enrollPasskey({ token: "access-factor" })
+  const url = await client.auth.signInWithOAuth({ provider: "google", redirectTo: "https://app.example/cb" })
+  assert.match(url, /\/auth\/v1\/authorize\?provider=google&redirect_to=/)
+  passwordBody = undefined
+  const exchanged = await client.auth.exchangeCode("oauth-code")
+  assert.equal(exchanged.access_token, "access-1")
+  assert.equal(client.auth.getSession()?.access_token, "access-1")
 })
