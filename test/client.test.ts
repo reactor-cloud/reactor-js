@@ -63,6 +63,25 @@ function route(call: Call): Response {
   }
   if (url.hostname === "signed.example") return new Response("ok", { status: 200 })
   if (url.pathname === "/fn/v1/ping") return json({ ok: true })
+  if (url.pathname === "/fn/v1/ping/enqueue") return json({ id: "task-1" }, 201)
+  if (url.pathname === "/fn/v1/_admin/tasks/task-1") {
+    return json({ id: "task-1", kind: "fn.invoke", status: "queued", attempts: 0, max_attempts: 1, last_error: null })
+  }
+  if (url.pathname === "/queue/v1/queues" && call.method === "GET") {
+    return json([{ name: "jobs", created_at: "2026-01-01T00:00:00Z" }])
+  }
+  if (url.pathname === "/queue/v1/queues" && call.method === "POST") return json({ name: "jobs" }, 201)
+  if (url.pathname === "/queue/v1/queues/jobs/send") return json({ msg_id: 7 }, 201)
+  if (url.pathname === "/queue/v1/queues/jobs/read" || url.pathname === "/queue/v1/queues/jobs/peek") {
+    return json([{ msg_id: 7, message: { hello: "world" }, read_ct: 0 }])
+  }
+  if (url.pathname === "/queue/v1/queues/jobs/delete" || url.pathname === "/queue/v1/queues/jobs/archive") {
+    return new Response(null, { status: 204 })
+  }
+  if (url.pathname === "/queue/v1/queues/jobs/subscriptions" && call.method === "DELETE") {
+    return new Response(null, { status: 204 })
+  }
+  if (url.pathname === "/queue/v1/queues/jobs/subscriptions") return new Response(null, { status: 201 })
   if (url.pathname.startsWith("/data/v1")) return json([])
   return new Response("not found", { status: 404 })
 }
@@ -162,6 +181,43 @@ test("upload presigns then puts the bytes", async () => {
   assert.equal(calls[1].method, "PUT")
   assert.equal(calls[1].url, "https://signed.example/object")
   assert.equal(calls[1].body, "hello")
+})
+
+test("queue and enqueue post the service routes", async () => {
+  install()
+  const client = createClient("http://reactor.test", "service-key")
+  assert.deepEqual(await client.queue.create("jobs"), { name: "jobs" })
+  assert.deepEqual(await client.queue.list(), [{ name: "jobs", created_at: "2026-01-01T00:00:00Z" }])
+  assert.deepEqual(await client.queue.send("jobs", { hello: "world" }, { delaySecs: 5 }), { msg_id: 7 })
+  assert.deepEqual(await client.queue.read("jobs", { vtSecs: 10, qty: 2 }), [{ msg_id: 7, message: { hello: "world" }, read_ct: 0 }])
+  assert.equal((await client.queue.peek("jobs"))[0].msg_id, 7)
+  await client.queue.delete("jobs", 7)
+  await client.queue.archive("jobs", 7)
+  await client.queue.subscribe("jobs", { functionName: "echo", vtSecs: 30, qty: 1, maxReads: 3 })
+  await client.queue.unsubscribe("jobs", "echo")
+  assert.deepEqual(await client.functions.enqueue("ping", { body: { n: 1 }, delaySecs: 2, maxAttempts: 1 }), { id: "task-1" })
+  assert.equal((await client.functions.task("task-1")).status, "queued")
+
+  const sent = calls.map((call) => `${call.method} ${new URL(call.url).pathname}`)
+  assert.deepEqual(sent, [
+    "POST /queue/v1/queues",
+    "GET /queue/v1/queues",
+    "POST /queue/v1/queues/jobs/send",
+    "POST /queue/v1/queues/jobs/read",
+    "GET /queue/v1/queues/jobs/peek",
+    "POST /queue/v1/queues/jobs/delete",
+    "POST /queue/v1/queues/jobs/archive",
+    "POST /queue/v1/queues/jobs/subscriptions",
+    "DELETE /queue/v1/queues/jobs/subscriptions",
+    "POST /fn/v1/ping/enqueue",
+    "GET /fn/v1/_admin/tasks/task-1",
+  ])
+  assert.ok(calls.every((call) => call.headers.authorization === "Bearer service-key"))
+  assert.deepEqual(JSON.parse(calls[2].body), { message: { hello: "world" }, delay_secs: 5 })
+  assert.deepEqual(JSON.parse(calls[3].body), { vt_secs: 10, qty: 2 })
+  assert.deepEqual(JSON.parse(calls[7].body), { function_name: "echo", vt_secs: 30, qty: 1, max_reads: 3 })
+  assert.deepEqual(JSON.parse(calls[8].body), { function_name: "echo" })
+  assert.deepEqual(JSON.parse(calls[9].body), { body: { n: 1 }, delay_secs: 2, max_attempts: 1 })
 })
 
 test("invoke posts to the function path", async () => {

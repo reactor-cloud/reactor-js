@@ -1,6 +1,7 @@
 import { createAuth, type Session } from "./auth.ts"
 import { createData } from "./data.ts"
 import { createFunctions } from "./functions.ts"
+import { createQueue } from "./queue.ts"
 import { createStorage } from "./storage.ts"
 
 export type { Session, User } from "./auth.ts"
@@ -27,5 +28,6 @@ export function createClient(url: string, anonKey: string, options: ReactorOptio
     },
     storage: createStorage(base, token, doFetch),
     functions: createFunctions(base, token, doFetch),
+    queue: createQueue(base, token, doFetch),
   }
 }
